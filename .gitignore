@@ -1,0 +1,8 @@
+__pycache__/
+venv/
+food_memory.json
+cloudflared.exe
+*.tgz
+data/
+.DS_Store
+Thumbs.db
