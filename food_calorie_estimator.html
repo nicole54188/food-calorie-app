@@ -1,0 +1,1486 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🍽️ 食物熱量估算系統 — Food-101</title>
+<!-- 後端推論模式：TF.js 已移除，改由 Flask /predict API 處理 -->
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --primary: #e17055;
+  --primary-dark: #c0392b;
+  --secondary: #00b894;
+  --bg: #f5f6fa;
+  --card: #ffffff;
+  --text: #2d3436;
+  --muted: #636e72;
+  --border: #dfe6e9;
+  --carb-color: #fdcb6e;
+  --protein-color: #e17055;
+  --fat-color: #74b9ff;
+  --shadow: 0 4px 20px rgba(0,0,0,0.08);
+  --radius: 16px;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang TC', sans-serif;
+  background: var(--bg);
+  min-height: 100vh;
+  color: var(--text);
+}
+
+/* ── Header ── */
+header {
+  background: linear-gradient(135deg, #e17055 0%, #d63031 50%, #c0392b 100%);
+  color: white;
+  padding: 24px 32px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 2px 12px rgba(225,112,85,0.4);
+}
+.header-title { display: flex; align-items: center; gap: 12px; }
+.header-title h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.5px; }
+.header-title span { font-size: 2rem; }
+.header-sub { font-size: 0.85rem; opacity: 0.85; margin-top: 2px; }
+#settings-btn {
+  background: rgba(255,255,255,0.2);
+  border: 1px solid rgba(255,255,255,0.4);
+  color: white;
+  border-radius: 10px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: background 0.2s;
+  white-space: nowrap;
+}
+#settings-btn:hover { background: rgba(255,255,255,0.3); }
+
+/* ── Model Status Banner ── */
+#model-status {
+  background: linear-gradient(90deg, #fff3cd, #ffeaa7);
+  border-bottom: 1px solid #fdd835;
+  padding: 10px 32px;
+  font-size: 0.85rem;
+  color: #6c4a00;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.4s;
+}
+#model-status.ready {
+  background: linear-gradient(90deg, #d4edda, #c3e6cb);
+  border-bottom-color: #28a745;
+  color: #155724;
+}
+.spinner {
+  width: 14px; height: 14px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Main Layout ── */
+main {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 28px 20px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+@media (max-width: 700px) {
+  main { grid-template-columns: 1fr; padding: 16px; }
+  header { flex-direction: column; gap: 12px; text-align: center; }
+}
+
+/* ── Card ── */
+.card {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.card-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Upload Zone ── */
+#upload-zone {
+  margin: 20px;
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  padding: 36px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.25s;
+  background: #fafbfc;
+  position: relative;
+}
+#upload-zone:hover, #upload-zone.dragover {
+  border-color: var(--primary);
+  background: #fff5f3;
+  transform: scale(1.01);
+}
+#upload-zone .upload-icon { font-size: 3rem; margin-bottom: 12px; }
+#upload-zone p { color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
+#upload-zone strong { color: var(--primary); }
+#file-input { display: none; }
+
+/* ── Image Preview ── */
+#preview-container { display: none; margin: 0 20px 20px; position: relative; }
+#preview-img {
+  width: 100%;
+  height: 260px;
+  object-fit: cover;
+  border-radius: 10px;
+  display: block;
+}
+#change-btn {
+  position: absolute;
+  top: 10px; right: 10px;
+  background: rgba(0,0,0,0.6);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+#change-btn:hover { background: rgba(0,0,0,0.8); }
+
+/* ── Predictions ── */
+#predictions-section { padding: 20px; border-top: 1px solid var(--border); }
+.predictions-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+#predictions-list { display: flex; flex-direction: column; gap: 8px; }
+.pred-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  transition: all 0.2s;
+  background: white;
+}
+.pred-item:hover { border-color: var(--primary); background: #fff5f3; }
+.pred-item.selected { border-color: var(--primary); background: #fff5f3; }
+.pred-rank {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.pred-item.selected .pred-rank { background: var(--primary); color: white; }
+.pred-name { flex: 1; font-size: 0.9rem; font-weight: 600; }
+.pred-bar-wrap { width: 80px; height: 6px; background: var(--border); border-radius: 3px; }
+.pred-bar { height: 100%; background: var(--primary); border-radius: 3px; }
+.pred-pct { font-size: 0.8rem; color: var(--muted); width: 36px; text-align: right; }
+
+/* ── Manual Search ── */
+#manual-search { display: flex; gap: 8px; margin-top: 12px; }
+#manual-input {
+  flex: 1;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.88rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+#manual-input:focus { border-color: var(--primary); }
+#manual-search-btn {
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+#manual-search-btn:hover { background: var(--primary-dark); }
+
+/* ── Results Panel ── */
+#results-panel { display: flex; flex-direction: column; gap: 24px; }
+
+/* ── Calories Display ── */
+#calorie-card .calorie-hero {
+  padding: 28px 20px;
+  text-align: center;
+  background: linear-gradient(135deg, #fff5f3, #ffe8e4);
+}
+.calorie-number { font-size: 3.5rem; font-weight: 800; color: var(--primary); line-height: 1; }
+.calorie-unit { font-size: 0.9rem; color: var(--muted); margin-top: 4px; }
+.calorie-food-name {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.calorie-source {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 6px;
+  padding: 3px 8px;
+  background: rgba(255,255,255,0.7);
+  border-radius: 20px;
+  display: inline-block;
+}
+
+/* ── Serving Slider ── */
+.serving-section { padding: 16px 20px; border-top: 1px solid var(--border); }
+.serving-label {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 10px;
+}
+.serving-label span:first-child { font-size: 0.85rem; font-weight: 600; }
+#serving-display {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--primary);
+  background: #fff5f3;
+  padding: 3px 10px;
+  border-radius: 20px;
+}
+#serving-slider {
+  width: 100%;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+/* ── Macros ── */
+.macros-section { padding: 16px 20px; border-top: 1px solid var(--border); }
+.macros-title { font-size: 0.8rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 14px; }
+.macro-row { margin-bottom: 12px; }
+.macro-info { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+.macro-name { font-size: 0.85rem; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.macro-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.macro-value { font-size: 0.85rem; font-weight: 700; }
+.macro-bar-track { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+.macro-bar-fill { height: 100%; border-radius: 4px; transition: width 0.6s cubic-bezier(0.4,0,0.2,1); }
+
+/* ── Macro Donut ── */
+.donut-wrapper { padding: 20px; display: flex; align-items: center; gap: 20px; border-top: 1px solid var(--border); }
+#macro-donut { flex-shrink: 0; }
+.donut-legend { flex: 1; }
+.legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 0.82rem; }
+.legend-color { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+.legend-label { color: var(--muted); flex: 1; }
+.legend-pct { font-weight: 700; }
+
+/* ── Empty State ── */
+#empty-state {
+  padding: 50px 20px;
+  text-align: center;
+  color: var(--muted);
+}
+#empty-state .empty-icon { font-size: 3.5rem; margin-bottom: 12px; }
+#empty-state p { font-size: 0.9rem; line-height: 1.6; }
+
+/* ── Settings Modal ── */
+#settings-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+#settings-overlay.open { display: flex; }
+#settings-modal {
+  background: white;
+  border-radius: 20px;
+  padding: 28px;
+  width: 90%;
+  max-width: 480px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+}
+#settings-modal h2 { font-size: 1.2rem; margin-bottom: 6px; }
+#settings-modal p { font-size: 0.85rem; color: var(--muted); margin-bottom: 20px; line-height: 1.5; }
+.form-group { margin-bottom: 16px; }
+.form-group label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; }
+.form-group input {
+  width: 100%;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.form-group input:focus { border-color: var(--primary); }
+.form-hint { font-size: 0.78rem; color: var(--muted); margin-top: 4px; }
+.modal-actions { display: flex; gap: 10px; margin-top: 20px; }
+.btn-primary {
+  flex: 1;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 10px;
+  padding: 12px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 700;
+  transition: background 0.2s;
+}
+.btn-primary:hover { background: var(--primary-dark); }
+.btn-secondary {
+  flex: 1;
+  background: var(--border);
+  color: var(--text);
+  border: none;
+  border-radius: 10px;
+  padding: 12px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 700;
+  transition: background 0.2s;
+}
+.btn-secondary:hover { background: #c8d0d4; }
+
+/* ── USDA Status Badge ── */
+.usda-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  padding: 3px 8px;
+  border-radius: 20px;
+  font-weight: 600;
+}
+.usda-badge.connected { background: #d4edda; color: #155724; }
+.usda-badge.offline { background: #f8d7da; color: #721c24; }
+
+/* ── Analyze Button ── */
+#analyze-btn {
+  display: block;
+  width: calc(100% - 40px);
+  margin: 0 20px 20px;
+  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+  color: white;
+  border: none;
+  border-radius: 12px;
+  padding: 14px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+  box-shadow: 0 4px 15px rgba(225,112,85,0.4);
+}
+#analyze-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(225,112,85,0.5); }
+#analyze-btn:active { transform: none; }
+#analyze-btn:disabled {
+  background: var(--border);
+  color: var(--muted);
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+/* ── Loading overlay on image ── */
+#img-loading {
+  display: none;
+  position: absolute; inset: 0;
+  background: rgba(255,255,255,0.85);
+  border-radius: 10px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--primary);
+}
+#img-loading.show { display: flex; }
+.big-spinner {
+  width: 32px; height: 32px;
+  border: 3px solid #ffd8cc;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* ── Tags ── */
+.tag-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 14px 20px; border-top: 1px solid var(--border); }
+.tag {
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: #f0f2f5;
+  color: var(--muted);
+  font-weight: 600;
+}
+.tag.highlight { background: #fff5f3; color: var(--primary); border: 1px solid #fdddd5; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-title">
+    <span>🍽️</span>
+    <div>
+      <h1>食物熱量估算系統</h1>
+      <div class="header-sub">Food-101 × TensorFlow.js × USDA FoodData Central</div>
+    </div>
+  </div>
+  <button id="settings-btn" onclick="openSettings()">⚙️ USDA API 設定</button>
+</header>
+
+<div id="model-status">
+  <div class="spinner"></div>
+  <span id="status-text">正在載入 MobileNet 模型，請稍候...</span>
+</div>
+
+<main>
+  <!-- Left: Upload + Predictions -->
+  <div class="card" id="upload-card">
+    <div class="card-header">
+      📷 上傳食物照片
+      <span id="usda-badge-header" class="usda-badge offline" style="margin-left:auto">● 靜態資料庫</span>
+    </div>
+
+    <!-- Upload Zone -->
+    <div id="upload-zone"
+         onclick="document.getElementById('file-input').click()"
+         ondragover="handleDragOver(event)"
+         ondragleave="handleDragLeave(event)"
+         ondrop="handleDrop(event)">
+      <div class="upload-icon">📸</div>
+      <p><strong>點擊上傳</strong>或拖曳圖片至此</p>
+      <p style="margin-top:6px;font-size:0.8rem">支援 JPG、PNG、WebP</p>
+    </div>
+    <input type="file" id="file-input" accept="image/*" onchange="handleFileSelect(event)">
+
+    <!-- Preview -->
+    <div id="preview-container">
+      <img id="preview-img" src="" alt="Food preview">
+      <div id="img-loading">
+        <div class="big-spinner"></div>
+        <span>辨識中...</span>
+      </div>
+      <button id="change-btn" onclick="resetUpload()">🔄 換圖</button>
+    </div>
+
+    <!-- Analyze Button -->
+    <button id="analyze-btn" disabled onclick="analyzeImage()">🔍 分析食物熱量</button>
+
+    <!-- Predictions -->
+    <div id="predictions-section" style="display:none">
+      <div class="predictions-label">🤖 模型預測結果（點選確認）</div>
+      <div id="predictions-list"></div>
+
+      <div id="manual-search" style="margin-top:14px">
+        <input type="text" id="manual-input" placeholder="找不到？手動輸入食物名稱（英文）" onkeydown="if(event.key==='Enter')manualSearch()">
+        <button id="manual-search-btn" onclick="manualSearch()">搜尋</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Results -->
+  <div id="results-panel">
+    <!-- Empty State -->
+    <div class="card" id="empty-state-card">
+      <div id="empty-state">
+        <div class="empty-icon">🥗</div>
+        <p>上傳食物照片後<br>這裡會顯示熱量與營養素分析</p>
+        <p style="margin-top:10px;font-size:0.78rem;color:#b2bec3">
+          使用 Food-101 資料集的 101 種食物類別<br>
+          支援 USDA FoodData Central 即時查詢
+        </p>
+      </div>
+    </div>
+
+    <!-- Calories Card (hidden until results) -->
+    <div class="card" id="calorie-card" style="display:none">
+      <div class="calorie-hero">
+        <div class="calorie-food-name" id="result-food-name">—</div>
+        <div class="calorie-number" id="result-calories">—</div>
+        <div class="calorie-unit">千卡 (kcal)</div>
+        <div class="calorie-source" id="result-source">靜態資料庫</div>
+      </div>
+
+      <!-- Serving Slider -->
+      <div class="serving-section">
+        <div class="serving-label">
+          <span>📏 份量調整</span>
+          <span id="serving-display">100g → 0 kcal</span>
+        </div>
+        <input type="range" id="serving-slider" min="10" max="500" value="100" step="10"
+               oninput="updateServing(this.value)">
+        <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--muted);margin-top:4px">
+          <span>10g</span><span>250g</span><span>500g</span>
+        </div>
+      </div>
+
+      <!-- Macros -->
+      <div class="macros-section">
+        <div class="macros-title">📊 每份巨量營養素</div>
+        <div class="macro-row" id="macro-carb-row">
+          <div class="macro-info">
+            <span class="macro-name">
+              <span class="macro-dot" style="background:var(--carb-color)"></span>碳水化合物
+            </span>
+            <span class="macro-value" id="macro-carb-val">—g</span>
+          </div>
+          <div class="macro-bar-track">
+            <div class="macro-bar-fill" id="macro-carb-bar" style="background:var(--carb-color);width:0%"></div>
+          </div>
+        </div>
+        <div class="macro-row" id="macro-protein-row">
+          <div class="macro-info">
+            <span class="macro-name">
+              <span class="macro-dot" style="background:var(--protein-color)"></span>蛋白質
+            </span>
+            <span class="macro-value" id="macro-protein-val">—g</span>
+          </div>
+          <div class="macro-bar-track">
+            <div class="macro-bar-fill" id="macro-protein-bar" style="background:var(--protein-color);width:0%"></div>
+          </div>
+        </div>
+        <div class="macro-row">
+          <div class="macro-info">
+            <span class="macro-name">
+              <span class="macro-dot" style="background:var(--fat-color)"></span>脂肪
+            </span>
+            <span class="macro-value" id="macro-fat-val">—g</span>
+          </div>
+          <div class="macro-bar-track">
+            <div class="macro-bar-fill" id="macro-fat-bar" style="background:var(--fat-color);width:0%"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Donut Chart -->
+      <div class="donut-wrapper">
+        <canvas id="macro-donut" width="100" height="100"></canvas>
+        <div class="donut-legend">
+          <div class="legend-item">
+            <div class="legend-color" style="background:var(--carb-color)"></div>
+            <span class="legend-label">碳水化合物</span>
+            <span class="legend-pct" id="legend-carb-pct">—%</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color" style="background:var(--protein-color)"></div>
+            <span class="legend-label">蛋白質</span>
+            <span class="legend-pct" id="legend-protein-pct">—%</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color" style="background:var(--fat-color)"></div>
+            <span class="legend-label">脂肪</span>
+            <span class="legend-pct" id="legend-fat-pct">—%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tags -->
+      <div class="tag-row" id="nutrition-tags"></div>
+
+      <!-- 自訂食物記憶 -->
+      <div id="memory-box" style="
+        margin-top:18px; padding:14px 16px;
+        background:var(--bg); border-radius:12px;
+        border:1.5px dashed #b2bec3;
+      ">
+        <div id="memory-match-notice" style="display:none;
+          background:#00b89422; border:1px solid var(--secondary);
+          border-radius:8px; padding:8px 12px; margin-bottom:10px;
+          font-size:0.82rem; color:var(--secondary); font-weight:600;">
+        </div>
+        <div style="font-size:0.82rem; color:#636e72; margin-bottom:8px;">
+          🧠 辨識不準確？告訴我正確的食物名稱，下次會記住：
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+          <input id="custom-food-input" type="text"
+            placeholder="食物名稱（顯示用，可中文）"
+            style="flex:1; padding:8px 12px; border-radius:8px;
+              border:1.5px solid #dfe6e9; font-size:0.88rem;
+              outline:none; background:white;"
+            onkeydown="if(event.key==='Enter') rememberFood()">
+          <button onclick="rememberFood()" style="
+            padding:8px 16px; background:var(--secondary); color:white;
+            border:none; border-radius:8px; font-size:0.85rem;
+            cursor:pointer; font-weight:600; white-space:nowrap;">
+            記住這個
+          </button>
+        </div>
+        <input id="custom-nutrition-input" type="text"
+          placeholder="🔍 熱量查詢詞（英文，選填）例：chicken nuggets"
+          style="width:100%; padding:7px 12px; border-radius:8px;
+            border:1.5px solid #dfe6e9; font-size:0.82rem;
+            outline:none; background:white; box-sizing:border-box;"
+          onkeydown="if(event.key==='Enter') rememberFood()">
+        <div id="memory-status" style="font-size:0.78rem; margin-top:6px; color:#636e72;"></div>
+        <div style="margin-top:10px; font-size:0.78rem; color:#b2bec3;">
+          已記憶食物：<span id="memory-count">0</span> 種
+          <button onclick="showMemoryList()" style="
+            margin-left:8px; background:none; border:none;
+            color:var(--primary); cursor:pointer; font-size:0.78rem;
+            text-decoration:underline;">查看清單</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- 記憶清單 Modal -->
+<div id="memory-overlay" onclick="if(event.target===this)closeMemoryList()"
+  style="display:none; position:fixed; inset:0; background:#0008;
+    z-index:999; align-items:center; justify-content:center;">
+  <div style="background:white; border-radius:16px; padding:24px;
+    width:360px; max-height:500px; overflow-y:auto; position:relative;">
+    <h3 style="margin:0 0 16px; color:#2d3436;">🧠 已記憶的食物</h3>
+    <div id="memory-list-content"></div>
+    <button onclick="closeMemoryList()" style="
+      margin-top:16px; width:100%; padding:10px;
+      background:var(--primary); color:white; border:none;
+      border-radius:8px; cursor:pointer; font-size:0.9rem;">關閉</button>
+  </div>
+</div>
+
+<!-- Settings Modal -->
+<div id="settings-overlay" onclick="if(event.target===this)closeSettings()">
+  <div id="settings-modal">
+    <h2>⚙️ USDA API 設定</h2>
+    <p>
+      設定 USDA FoodData Central API Key 可獲取更精確的即時營養資料。<br>
+      免費申請：<a href="https://fdc.nal.usda.gov/api-guide.html" target="_blank" style="color:var(--primary)">fdc.nal.usda.gov/api-guide.html</a>
+      <br><br>
+      未設定時使用內建靜態資料庫（101 種 Food-101 類別）。
+    </p>
+    <div class="form-group">
+      <label>USDA API Key</label>
+      <input type="text" id="usda-key-input" placeholder="貼上你的 API Key...">
+      <div class="form-hint">💡 亦可用 DEMO_KEY 測試（每日限 50 次）</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeSettings()">取消</button>
+      <button class="btn-primary" onclick="saveSettings()">儲存並套用</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════
+//  Food-101 靜態熱量資料庫 (per 100g)
+// ═══════════════════════════════════════════════════
+const FOOD101_DB = {
+  apple_pie:             { label:'Apple Pie 蘋果派',          cal:237, protein:2.3,  carbs:34.0, fat:10.7, serving:125 },
+  baby_back_ribs:        { label:'Baby Back Ribs 豬肋排',      cal:292, protein:22.0, carbs:2.0,  fat:22.0, serving:250 },
+  baklava:               { label:'Baklava 果仁蜜餅',           cal:428, protein:6.0,  carbs:52.0, fat:23.0, serving:80  },
+  beef_carpaccio:        { label:'Beef Carpaccio 牛肉薄片',    cal:164, protein:18.0, carbs:2.0,  fat:9.0,  serving:100 },
+  beef_tartare:          { label:'Beef Tartare 韃靼牛肉',      cal:175, protein:18.0, carbs:1.0,  fat:11.0, serving:120 },
+  beet_salad:            { label:'Beet Salad 甜菜根沙拉',      cal:55,  protein:2.0,  carbs:12.0, fat:0.3,  serving:150 },
+  beignets:              { label:'Beignets 法式甜甜圈',         cal:366, protein:5.0,  carbs:45.0, fat:19.0, serving:80  },
+  bibimbap:              { label:'Bibimbap 韓式拌飯',           cal:125, protein:6.0,  carbs:20.0, fat:3.0,  serving:350 },
+  bread_pudding:         { label:'Bread Pudding 麵包布丁',      cal:194, protein:5.0,  carbs:32.0, fat:6.0,  serving:150 },
+  breakfast_burrito:     { label:'Breakfast Burrito 早餐墨西哥捲', cal:218, protein:10.0, carbs:22.0, fat:10.0, serving:200 },
+  bruschetta:            { label:'Bruschetta 義式烤麵包',        cal:198, protein:5.0,  carbs:30.0, fat:6.0,  serving:100 },
+  caesar_salad:          { label:'Caesar Salad 凱薩沙拉',       cal:120, protein:4.0,  carbs:8.0,  fat:8.0,  serving:200 },
+  cannoli:               { label:'Cannoli 卡諾里',              cal:340, protein:8.0,  carbs:38.0, fat:17.0, serving:100 },
+  caprese_salad:         { label:'Caprese Salad 卡布里沙拉',    cal:155, protein:10.0, carbs:5.0,  fat:11.0, serving:150 },
+  carrot_cake:           { label:'Carrot Cake 胡蘿蔔蛋糕',      cal:415, protein:4.0,  carbs:56.0, fat:21.0, serving:100 },
+  ceviche:               { label:'Ceviche 生魚醃漬',            cal:72,  protein:11.0, carbs:5.0,  fat:1.0,  serving:150 },
+  cheese_plate:          { label:'Cheese Plate 起司拼盤',        cal:350, protein:20.0, carbs:5.0,  fat:28.0, serving:80  },
+  cheesecake:            { label:'Cheesecake 起司蛋糕',          cal:321, protein:5.5,  carbs:25.0, fat:22.0, serving:120 },
+  chicken_curry:         { label:'Chicken Curry 咖哩雞',         cal:170, protein:15.0, carbs:8.0,  fat:8.0,  serving:250 },
+  chicken_quesadilla:    { label:'Chicken Quesadilla 雞肉墨西哥薄餅', cal:238, protein:14.0, carbs:22.0, fat:11.0, serving:180 },
+  chicken_wings:         { label:'Chicken Wings 雞翅',           cal:290, protein:27.0, carbs:0.0,  fat:19.0, serving:200 },
+  chocolate_cake:        { label:'Chocolate Cake 巧克力蛋糕',    cal:371, protein:5.0,  carbs:52.0, fat:18.0, serving:100 },
+  chocolate_mousse:      { label:'Chocolate Mousse 巧克力慕斯',  cal:235, protein:4.0,  carbs:28.0, fat:12.0, serving:120 },
+  churros:               { label:'Churros 吉拿棒',              cal:376, protein:5.0,  carbs:50.0, fat:18.0, serving:100 },
+  clam_chowder:          { label:'Clam Chowder 蛤蜊巧達湯',     cal:101, protein:6.0,  carbs:11.0, fat:3.5,  serving:300 },
+  club_sandwich:         { label:'Club Sandwich 總匯三明治',     cal:228, protein:15.0, carbs:22.0, fat:9.0,  serving:220 },
+  crab_cakes:            { label:'Crab Cakes 蟹肉餅',           cal:192, protein:17.0, carbs:9.0,  fat:10.0, serving:150 },
+  creme_brulee:          { label:'Crème Brûlée 焦糖布丁',       cal:236, protein:4.0,  carbs:22.0, fat:15.0, serving:120 },
+  croque_madame:         { label:'Croque Madame 法式烤火腿起司蛋', cal:255, protein:16.0, carbs:18.0, fat:14.0, serving:200 },
+  cup_cakes:             { label:'Cupcakes 杯子蛋糕',            cal:370, protein:4.0,  carbs:52.0, fat:17.0, serving:80  },
+  deviled_eggs:          { label:'Deviled Eggs 魔鬼蛋',          cal:148, protein:9.0,  carbs:2.0,  fat:12.0, serving:100 },
+  donuts:                { label:'Donuts 甜甜圈',               cal:452, protein:6.0,  carbs:51.0, fat:25.0, serving:75  },
+  dumplings:             { label:'Dumplings 水餃',              cal:191, protein:8.0,  carbs:26.0, fat:6.0,  serving:150 },
+  edamame:               { label:'Edamame 毛豆',                cal:121, protein:11.0, carbs:10.0, fat:5.0,  serving:100 },
+  eggs_benedict:         { label:'Eggs Benedict 班尼迪克蛋',     cal:262, protein:12.0, carbs:18.0, fat:16.0, serving:200 },
+  escargots:             { label:'Escargots 法式蝸牛',           cal:90,  protein:16.0, carbs:2.0,  fat:1.4,  serving:100 },
+  falafel:               { label:'Falafel 炸鷹嘴豆餅',           cal:333, protein:13.0, carbs:31.0, fat:18.0, serving:150 },
+  filet_mignon:          { label:'Filet Mignon 菲力牛排',        cal:219, protein:26.0, carbs:0.0,  fat:12.0, serving:200 },
+  fish_and_chips:        { label:'Fish and Chips 炸魚薯條',      cal:260, protein:12.0, carbs:24.0, fat:13.0, serving:300 },
+  foie_gras:             { label:'Foie Gras 鵝肝',              cal:462, protein:11.0, carbs:5.0,  fat:44.0, serving:80  },
+  french_fries:          { label:'French Fries 薯條',            cal:312, protein:3.4,  carbs:41.0, fat:15.0, serving:150 },
+  french_onion_soup:     { label:'French Onion Soup 法式洋蔥湯', cal:78,  protein:4.0,  carbs:10.0, fat:3.0,  serving:300 },
+  french_toast:          { label:'French Toast 法式吐司',        cal:229, protein:9.0,  carbs:27.0, fat:10.0, serving:150 },
+  fried_calamari:        { label:'Fried Calamari 炸魷魚',        cal:175, protein:14.0, carbs:12.0, fat:8.0,  serving:150 },
+  fried_rice:            { label:'Fried Rice 炒飯',              cal:163, protein:4.0,  carbs:25.0, fat:5.0,  serving:250 },
+  frozen_yogurt:         { label:'Frozen Yogurt 冷凍優格',       cal:127, protein:3.5,  carbs:26.0, fat:1.5,  serving:150 },
+  garlic_bread:          { label:'Garlic Bread 蒜味麵包',        cal:350, protein:8.0,  carbs:45.0, fat:16.0, serving:100 },
+  gnocchi:               { label:'Gnocchi 義式馬鈴薯麵疙瘩',    cal:130, protein:4.0,  carbs:25.0, fat:1.5,  serving:200 },
+  greek_salad:           { label:'Greek Salad 希臘沙拉',         cal:79,  protein:3.0,  carbs:7.0,  fat:4.5,  serving:200 },
+  grilled_cheese_sandwich:{ label:'Grilled Cheese 烤起司三明治', cal:312, protein:13.0, carbs:30.0, fat:16.0, serving:180 },
+  grilled_salmon:        { label:'Grilled Salmon 烤鮭魚',        cal:208, protein:28.0, carbs:0.0,  fat:10.0, serving:180 },
+  guacamole:             { label:'Guacamole 酪梨醬',             cal:157, protein:2.0,  carbs:9.0,  fat:14.0, serving:100 },
+  gyoza:                 { label:'Gyoza 煎餃',                   cal:200, protein:8.0,  carbs:22.0, fat:9.0,  serving:150 },
+  hamburger:             { label:'Hamburger 漢堡',               cal:295, protein:17.0, carbs:24.0, fat:13.0, serving:200 },
+  hot_and_sour_soup:     { label:'Hot and Sour Soup 酸辣湯',     cal:45,  protein:4.0,  carbs:5.0,  fat:1.0,  serving:300 },
+  hot_dog:               { label:'Hot Dog 熱狗',                 cal:290, protein:11.0, carbs:23.0, fat:17.0, serving:130 },
+  huevos_rancheros:      { label:'Huevos Rancheros 墨西哥蛋',   cal:175, protein:10.0, carbs:14.0, fat:9.0,  serving:200 },
+  hummus:                { label:'Hummus 鷹嘴豆泥',              cal:177, protein:8.0,  carbs:20.0, fat:8.0,  serving:100 },
+  ice_cream:             { label:'Ice Cream 冰淇淋',             cal:207, protein:3.5,  carbs:24.0, fat:11.0, serving:100 },
+  lasagna:               { label:'Lasagna 千層麵',               cal:135, protein:8.0,  carbs:13.0, fat:6.0,  serving:300 },
+  lobster_bisque:        { label:'Lobster Bisque 龍蝦濃湯',      cal:120, protein:8.0,  carbs:10.0, fat:6.0,  serving:250 },
+  lobster_roll_sandwich: { label:'Lobster Roll 龍蝦三明治',      cal:208, protein:15.0, carbs:20.0, fat:8.0,  serving:200 },
+  macaroni_and_cheese:   { label:'Mac and Cheese 起司通心粉',    cal:164, protein:7.0,  carbs:20.0, fat:6.0,  serving:250 },
+  macarons:              { label:'Macarons 馬卡龍',              cal:407, protein:7.0,  carbs:62.0, fat:15.0, serving:50  },
+  miso_soup:             { label:'Miso Soup 味噌湯',             cal:40,  protein:3.0,  carbs:5.0,  fat:1.0,  serving:250 },
+  mussels:               { label:'Mussels 淡菜',                 cal:86,  protein:12.0, carbs:4.0,  fat:2.0,  serving:200 },
+  nachos:                { label:'Nachos 墨西哥玉米片',           cal:306, protein:8.0,  carbs:35.0, fat:15.0, serving:200 },
+  omelette:              { label:'Omelette 歐姆蛋',              cal:154, protein:11.0, carbs:2.0,  fat:12.0, serving:150 },
+  onion_rings:           { label:'Onion Rings 洋蔥圈',           cal:411, protein:5.0,  carbs:44.0, fat:24.0, serving:100 },
+  oysters:               { label:'Oysters 生蠔',                 cal:68,  protein:8.0,  carbs:4.0,  fat:2.0,  serving:100 },
+  pad_thai:              { label:'Pad Thai 泰式炒河粉',           cal:181, protein:9.0,  carbs:24.0, fat:6.0,  serving:300 },
+  paella:                { label:'Paella 西班牙海鮮飯',           cal:153, protein:10.0, carbs:20.0, fat:4.0,  serving:300 },
+  pancakes:              { label:'Pancakes 鬆餅',                cal:227, protein:6.0,  carbs:35.0, fat:8.0,  serving:150 },
+  panna_cotta:           { label:'Panna Cotta 奶酪',             cal:220, protein:3.0,  carbs:22.0, fat:14.0, serving:120 },
+  peking_duck:           { label:'Peking Duck 北京烤鴨',          cal:342, protein:29.0, carbs:5.0,  fat:23.0, serving:200 },
+  pho:                   { label:'Pho 越南河粉',                  cal:90,  protein:7.0,  carbs:12.0, fat:2.0,  serving:400 },
+  pizza:                 { label:'Pizza 披薩',                   cal:266, protein:11.0, carbs:33.0, fat:10.0, serving:200 },
+  pork_chop:             { label:'Pork Chop 豬排',               cal:231, protein:26.0, carbs:0.0,  fat:13.0, serving:200 },
+  poutine:               { label:'Poutine 加拿大肉汁薯條',        cal:280, protein:9.0,  carbs:32.0, fat:14.0, serving:300 },
+  prime_rib:             { label:'Prime Rib 主肋排',              cal:263, protein:24.0, carbs:0.0,  fat:18.0, serving:250 },
+  pulled_pork_sandwich:  { label:'Pulled Pork Sandwich 手撕豬肉堡', cal:263, protein:18.0, carbs:24.0, fat:10.0, serving:220 },
+  ramen:                 { label:'Ramen 拉麵',                   cal:112, protein:7.0,  carbs:14.0, fat:3.0,  serving:400 },
+  ravioli:               { label:'Ravioli 義式餃子',              cal:187, protein:9.0,  carbs:25.0, fat:6.0,  serving:200 },
+  red_velvet_cake:       { label:'Red Velvet Cake 紅絲絨蛋糕',   cal:415, protein:4.5,  carbs:56.0, fat:20.0, serving:100 },
+  risotto:               { label:'Risotto 燉飯',                 cal:148, protein:5.0,  carbs:26.0, fat:3.0,  serving:300 },
+  samosa:                { label:'Samosa 三角炸餃',               cal:308, protein:6.0,  carbs:32.0, fat:18.0, serving:100 },
+  sashimi:               { label:'Sashimi 生魚片',               cal:130, protein:22.0, carbs:0.0,  fat:4.0,  serving:100 },
+  scallops:              { label:'Scallops 干貝',                 cal:111, protein:20.0, carbs:5.0,  fat:1.0,  serving:150 },
+  seaweed_salad:         { label:'Seaweed Salad 海藻沙拉',        cal:45,  protein:2.0,  carbs:8.0,  fat:0.5,  serving:100 },
+  shrimp_and_grits:      { label:'Shrimp and Grits 蝦仁玉米粥',  cal:175, protein:14.0, carbs:16.0, fat:6.0,  serving:250 },
+  spaghetti_bolognese:   { label:'Spaghetti Bolognese 肉醬義大利麵', cal:147, protein:9.0,  carbs:18.0, fat:4.0,  serving:300 },
+  spaghetti_carbonara:   { label:'Spaghetti Carbonara 培根蛋黃義麵', cal:188, protein:9.0,  carbs:22.0, fat:7.0,  serving:300 },
+  spring_rolls:          { label:'Spring Rolls 春捲',             cal:265, protein:6.0,  carbs:30.0, fat:14.0, serving:120 },
+  steak:                 { label:'Steak 牛排',                   cal:271, protein:26.0, carbs:0.0,  fat:18.0, serving:250 },
+  strawberry_shortcake:  { label:'Strawberry Shortcake 草莓蛋糕', cal:328, protein:4.0,  carbs:48.0, fat:14.0, serving:120 },
+  sushi:                 { label:'Sushi 壽司',                   cal:143, protein:9.0,  carbs:24.0, fat:2.0,  serving:150 },
+  tacos:                 { label:'Tacos 塔可',                   cal:226, protein:12.0, carbs:22.0, fat:10.0, serving:180 },
+  takoyaki:              { label:'Takoyaki 章魚燒',              cal:200, protein:8.0,  carbs:24.0, fat:8.0,  serving:150 },
+  tiramisu:              { label:'Tiramisu 提拉米蘇',             cal:240, protein:6.0,  carbs:28.0, fat:12.0, serving:120 },
+  tuna_tartare:          { label:'Tuna Tartare 鮪魚韃靼',         cal:108, protein:15.0, carbs:3.0,  fat:4.0,  serving:100 },
+  waffles:               { label:'Waffles 格子鬆餅',              cal:291, protein:8.0,  carbs:37.0, fat:13.0, serving:150 },
+};
+
+// ═══════════════════════════════════════════════════
+//  MobileNet → Food-101 語意對應
+// ═══════════════════════════════════════════════════
+const LABEL_MAP = [
+  [['pizza','pizza pie'], 'pizza'],
+  [['cheeseburger','hamburger'], 'hamburger'],
+  [['hotdog','hot dog','frank'], 'hot_dog'],
+  [['ice cream','ice-cream'], 'ice_cream'],
+  [['guacamole'], 'guacamole'],
+  [['burrito'], 'breakfast_burrito'],
+  [['carbonara'], 'spaghetti_carbonara'],
+  [['waffle'], 'waffles'],
+  [['pancake'], 'pancakes'],
+  [['miso'], 'miso_soup'],
+  [['ramen','noodle'], 'ramen'],
+  [['sushi'], 'sushi'],
+  [['steak','sirloin','ribeye','beef'], 'steak'],
+  [['salmon','fish'], 'grilled_salmon'],
+  [['taco'], 'tacos'],
+  [['nacho'], 'nachos'],
+  [['hummus'], 'hummus'],
+  [['falafel'], 'falafel'],
+  [['dumpling','dim sum'], 'dumplings'],
+  [['gyoza'], 'gyoza'],
+  [['spring roll'], 'spring_rolls'],
+  [['cheesecake'], 'cheesecake'],
+  [['chocolate cake'], 'chocolate_cake'],
+  [['tiramisu'], 'tiramisu'],
+  [['donut','doughnut'], 'donuts'],
+  [['cupcake'], 'cup_cakes'],
+  [['macaron'], 'macarons'],
+  [['churro'], 'churros'],
+  [['french toast'], 'french_toast'],
+  [['omelette','omelet','egg'], 'omelette'],
+  [['caesar salad'], 'caesar_salad'],
+  [['greek salad'], 'greek_salad'],
+  [['risotto'], 'risotto'],
+  [['paella'], 'paella'],
+  [['lasagna','lasagne'], 'lasagna'],
+  [['ravioli'], 'ravioli'],
+  [['gnocchi'], 'gnocchi'],
+  [['fried rice'], 'fried_rice'],
+  [['pad thai'], 'pad_thai'],
+  [['pho'], 'pho'],
+  [['edamame'], 'edamame'],
+  [['oyster'], 'oysters'],
+  [['mussel'], 'mussels'],
+  [['scallop'], 'scallops'],
+  [['lobster'], 'lobster_bisque'],
+  [['clam','chowder'], 'clam_chowder'],
+  [['french fries','fries','chips'], 'french_fries'],
+  [['onion ring'], 'onion_rings'],
+  [['chicken wing'], 'chicken_wings'],
+  [['curry'], 'chicken_curry'],
+  [['wonton','dumpling'], 'dumplings'],
+  [['bread','toast'], 'garlic_bread'],
+  [['apple pie'], 'apple_pie'],
+  [['creme brulee','crème brûlée'], 'creme_brulee'],
+  [['baklava'], 'baklava'],
+  [['cannoli'], 'cannoli'],
+  [['waffle','waffles'], 'waffles'],
+  [['sandwich','club'], 'club_sandwich'],
+  [['bibimbap'], 'bibimbap'],
+  [['takoyaki'], 'takoyaki'],
+  [['sashimi'], 'sashimi'],
+  [['panna cotta'], 'panna_cotta'],
+  [['peking duck','duck'], 'peking_duck'],
+  [['samosa'], 'samosa'],
+  [['bruschetta'], 'bruschetta'],
+  [['caprese'], 'caprese_salad'],
+  [['deviled egg'], 'deviled_eggs'],
+  [['seaweed'], 'seaweed_salad'],
+  [['tiramisu'], 'tiramisu'],
+  [['pork chop'], 'pork_chop'],
+  [['prime rib','rib'], 'prime_rib'],
+  [['beet'], 'beet_salad'],
+];
+
+// ═══════════════════════════════════════════════════
+//  State
+// ═══════════════════════════════════════════════════
+let model = null;
+let usdaKey = localStorage.getItem('usda_key') || '';
+let lastImageBase64 = '';   // 記住目前分析的圖片，給「記住這個」用
+
+// ── 自訂食物記憶功能 ──
+/*
+ * rememberFood() — 儲存自訂食物記憶
+ * ======================================
+ * 當 AI 辨識錯誤時，使用者可以手動輸入正確名稱，
+ * 系統會把「這張圖的指紋 + 正確名稱」存到後端的 food_memory.json
+ *
+ * 下次遇到相似的圖，系統就會優先使用記憶中的名稱，而不是 AI 的猜測。
+ *
+ * 欄位說明：
+ *   label           → 食物顯示名稱（中文 OK，例如：雞塊）
+ *   nutrition_query → 查熱量用的英文詞（選填，例如：chicken nuggets）
+ *                     因為 USDA 熱量資料庫是英文，中文名查不到
+ */
+async function rememberFood() {
+  const input   = document.getElementById('custom-food-input');
+  const nutInput= document.getElementById('custom-nutrition-input');
+  const status  = document.getElementById('memory-status');
+  const label   = input.value.trim();
+  const nutrition_query = nutInput.value.trim();
+  if (!label) { status.textContent = '⚠️ 請輸入食物名稱'; return; }
+  if (!lastImageBase64) { status.textContent = '⚠️ 請先上傳一張圖片'; return; }
+
+  status.textContent = '儲存中...';
+  try {
+    // 把圖片（base64）+ 名稱 一起傳給後端 /remember 端點
+    const res = await fetch('/remember', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: lastImageBase64, label, nutrition_query })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    status.textContent = `✅ 已記住「${data.label}」（共 ${data.total} 種）`;
+    document.getElementById('memory-count').textContent = data.total;
+    input.value = ''; nutInput.value = '';
+  } catch(e) {
+    status.textContent = '❌ ' + e.message;
+  }
+}
+
+async function updateMemoryCount() {
+  try {
+    const res = await fetch('/memory');
+    const data = await res.json();
+    document.getElementById('memory-count').textContent = data.total;
+  } catch(e) {}
+}
+
+async function showMemoryList() {
+  const overlay = document.getElementById('memory-overlay');
+  const content = document.getElementById('memory-list-content');
+  overlay.style.display = 'flex';
+  content.innerHTML = '載入中...';
+  try {
+    const res = await fetch('/memory');
+    const data = await res.json();
+    if (data.total === 0) {
+      content.innerHTML = '<p style="color:#b2bec3;text-align:center">尚無記憶</p>';
+      return;
+    }
+    content.innerHTML = data.items.map(item => `
+      <div style="display:flex;justify-content:space-between;align-items:center;
+        padding:8px 0;border-bottom:1px solid #f0f0f0;">
+        <div>
+          <div style="font-weight:600;color:#2d3436">${item.label}</div>
+          <div style="font-size:0.75rem;color:#b2bec3">${item.created_at}</div>
+        </div>
+        <button onclick="deleteMemory('${item.label}')" style="
+          background:none;border:1px solid #e17055;color:#e17055;
+          border-radius:6px;padding:4px 10px;cursor:pointer;font-size:0.78rem;">
+          刪除
+        </button>
+      </div>`).join('');
+  } catch(e) {
+    content.innerHTML = '<p style="color:red">載入失敗</p>';
+  }
+}
+
+function closeMemoryList() {
+  document.getElementById('memory-overlay').style.display = 'none';
+}
+
+async function deleteMemory(label) {
+  await fetch(`/memory/${encodeURIComponent(label)}`, { method: 'DELETE' });
+  showMemoryList();
+  updateMemoryCount();
+}
+let currentNutrition = null;  // { cal, protein, carbs, fat } per 100g
+let currentServing = 100;
+
+// ═══════════════════════════════════════════════════
+//  Model Loading（後端 API 模式）
+// ═══════════════════════════════════════════════════
+/*
+ * loadModel() — 初始化：連線到後端推論伺服器
+ * =============================================
+ * 頁面載入後第一個執行的重要函式。
+ *
+ * 這個系統的推論「不在瀏覽器裡面跑」，而是：
+ *   瀏覽器（前端 JS）← 傳圖片 →  Flask 伺服器（後端 Python）
+ *                                        ↓
+ *                              TFLite 模型推論
+ *                                        ↓
+ *   瀏覽器（顯示結果）← 回傳Top-5 ←  Flask
+ *
+ * 為什麼不在瀏覽器跑？
+ *   EfficientNetB0 有 238 層，直接在 JS 跑太佔記憶體，瀏覽器會卡死。
+ *   改成後端跑，瀏覽器只負責顯示，速度和穩定性都更好。
+ *
+ * 載入步驟：
+ *   1. GET /ping → 確認 Flask 伺服器有在運作
+ *   2. 建立 model.classify() 函式（讓後面程式碼能統一呼叫）
+ */
+async function loadModel() {
+  try {
+    document.getElementById('status-text').textContent = '正在連線至推論伺服器...';
+    const res = await fetch('/ping');
+    if (!res.ok) throw new Error('伺服器未回應');
+
+    /*
+     * model.classify(imgEl, topK) — 執行食物辨識
+     * ---------------------------------------------------
+     * 步驟：
+     *   1. 用 <canvas> 把 <img> 轉成 Base64 字串
+     *      Base64：把圖片二進位資料轉成純文字，這樣才能放進 JSON 傳輸
+     *   2. POST /predict，附上 Base64 圖片
+     *   3. 後端回傳 Top-5 預測 + 可能的記憶符合
+     *   4. 如果有記憶符合，把記憶的名稱插到第一位
+     */
+    model = {
+      classify: async (imgEl, topK = 5) => {
+        // 步驟1：用 canvas 把 img element 的像素資料轉成 Base64
+        const canvas = document.createElement('canvas');
+        canvas.width = imgEl.naturalWidth || imgEl.width;
+        canvas.height = imgEl.naturalHeight || imgEl.height;
+        canvas.getContext('2d').drawImage(imgEl, 0, 0);
+        // quality=0.9：JPEG 壓縮品質 90%，平衡傳輸大小和圖片品質
+        const base64 = canvas.toDataURL('image/jpeg', 0.9);
+        lastImageBase64 = base64;   // 儲存供「記住這個」功能使用
+
+        // 步驟2：傳送圖片給後端進行 AI 推論
+        const resp = await fetch('/predict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: base64 })
+        });
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+
+        /*
+         * 步驟3：處理記憶符合
+         * 如果後端在記憶庫中找到相似圖片（相似度 > 0.92）
+         * → 顯示綠色提示條
+         * → 把記憶的名稱排在第一位，並附上 nutritionQuery 給熱量查詢用
+         *
+         * nutritionQuery 優先順序：
+         *   記憶的英文查詢詞 > 模型預測的類別名 > 記憶的中文名
+         */
+        const notice = document.getElementById('memory-match-notice');
+        if (data.memory_match) {
+          notice.style.display = 'block';
+          notice.textContent =
+            `🧠 記憶符合：這是「${data.memory_match.label}」`
+            + `（相似度 ${(data.memory_match.similarity * 100).toFixed(1)}%）`;
+          // nutrition_query 有填就用它查熱量，沒填用原模型預測
+          const nutritionName = data.memory_match.nutrition_query
+            || data.predictions[0]?.className
+            || data.memory_match.label;
+          return [{
+            className: data.memory_match.label,   // 顯示名稱（中文）
+            nutritionQuery: nutritionName,         // 熱量查詢用（英文）
+            probability: data.memory_match.similarity
+          }, ...data.predictions.slice(0, topK - 1)];
+        } else {
+          notice.style.display = 'none';
+        }
+
+        // 步驟4：沒有記憶符合，直接回傳模型的 Top-K 預測
+        return data.predictions.slice(0, topK).map(p => ({
+          className: p.className,
+          probability: p.probability
+        }));
+      }
+    };
+
+    document.getElementById('model-status').classList.add('ready');
+    document.getElementById('status-text').textContent = '✅ Food-101 推論伺服器已連線（EfficientNetB0 TFLite，101 類）';
+    document.querySelector('#model-status .spinner').style.display = 'none';
+  } catch (e) {
+    document.getElementById('status-text').textContent = '❌ 伺服器連線失敗：' + e.message;
+    console.error(e);
+  }
+}
+
+// Food-101 class names（與訓練時 sorted() 一致）
+const CLASS_NAMES = [
+  'apple_pie','baby_back_ribs','baklava','beef_carpaccio','beef_tartare',
+  'beet_salad','beignets','bibimbap','bread_pudding','breakfast_burrito',
+  'bruschetta','caesar_salad','cannoli','caprese_salad','carrot_cake',
+  'ceviche','cheese_plate','cheesecake','chicken_curry','chicken_quesadilla',
+  'chicken_wings','chocolate_cake','chocolate_mousse','churros','clam_chowder',
+  'club_sandwich','crab_cakes','creme_brulee','croque_madame','cup_cakes',
+  'deviled_eggs','donuts','dumplings','edamame','eggs_benedict',
+  'escargots','falafel','filet_mignon','fish_and_chips','foie_gras',
+  'french_fries','french_onion_soup','french_toast','fried_calamari','fried_rice',
+  'frozen_yogurt','garlic_bread','gnocchi','greek_salad','grilled_cheese_sandwich',
+  'grilled_salmon','guacamole','gyoza','hamburger','hot_and_sour_soup',
+  'hot_dog','huevos_rancheros','hummus','ice_cream','lasagna',
+  'lobster_bisque','lobster_roll_sandwich','macaroni_and_cheese','macarons','miso_soup',
+  'mussels','nachos','omelette','onion_rings','oysters',
+  'pad_thai','paella','pancakes','panna_cotta','peking_duck',
+  'pho','pizza','pork_chop','poutine','prime_rib',
+  'pulled_pork_sandwich','ramen','ravioli','red_velvet_cake','risotto',
+  'samosa','sashimi','scallops','seaweed_salad','shrimp_and_grits',
+  'spaghetti_bolognese','spaghetti_carbonara','spring_rolls','steak','strawberry_shortcake',
+  'sushi','tacos','takoyaki','tiramisu','tuna_tartare','waffles'
+];
+
+// ═══════════════════════════════════════════════════
+//  Upload Handling
+// ═══════════════════════════════════════════════════
+function handleDragOver(e) {
+  e.preventDefault();
+  document.getElementById('upload-zone').classList.add('dragover');
+}
+function handleDragLeave(e) {
+  document.getElementById('upload-zone').classList.remove('dragover');
+}
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('upload-zone').classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) loadPreview(file);
+}
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (file) loadPreview(file);
+}
+
+function loadPreview(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = document.getElementById('preview-img');
+    img.src = e.target.result;
+    document.getElementById('upload-zone').style.display = 'none';
+    document.getElementById('preview-container').style.display = 'block';
+    document.getElementById('analyze-btn').disabled = !model;
+    document.getElementById('predictions-section').style.display = 'none';
+    document.getElementById('predictions-list').innerHTML = '';
+  };
+  reader.readAsDataURL(file);
+}
+
+function resetUpload() {
+  document.getElementById('upload-zone').style.display = 'block';
+  document.getElementById('preview-container').style.display = 'none';
+  document.getElementById('predictions-section').style.display = 'none';
+  document.getElementById('analyze-btn').disabled = true;
+  document.getElementById('file-input').value = '';
+  document.getElementById('predictions-list').innerHTML = '';
+  document.getElementById('empty-state-card').style.display = 'block';
+  document.getElementById('calorie-card').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════
+//  Image Analysis
+// ═══════════════════════════════════════════════════
+async function analyzeImage() {
+  if (!model) { alert('模型尚未載入，請稍候'); return; }
+  const img = document.getElementById('preview-img');
+  const loading = document.getElementById('img-loading');
+  const btn = document.getElementById('analyze-btn');
+
+  loading.classList.add('show');
+  btn.disabled = true;
+  btn.textContent = '⏳ 分析中...';
+
+  try {
+    const predictions = await model.classify(img, 5);
+    loading.classList.remove('show');
+    btn.textContent = '🔍 重新分析';
+    btn.disabled = false;
+    showPredictions(predictions);
+  } catch (e) {
+    loading.classList.remove('show');
+    btn.textContent = '🔍 分析食物熱量';
+    btn.disabled = false;
+    alert('分析失敗：' + e.message);
+  }
+}
+
+function showPredictions(predictions) {
+  const section = document.getElementById('predictions-section');
+  const list = document.getElementById('predictions-list');
+  section.style.display = 'block';
+  list.innerHTML = '';
+
+  predictions.forEach((p, i) => {
+    // 新模型直接輸出 Food-101 class name，不需要 mapToFood101
+    const food101key = p.className;
+    // nutritionQuery：記憶符合時用英文查詢詞，其餘用 className
+    const lookupKey = p.nutritionQuery || food101key;
+    const label = FOOD101_DB[food101key]?.label || food101key.replace(/_/g, ' ');
+    const pct = Math.round(p.probability * 100);
+
+    const item = document.createElement('div');
+    item.className = 'pred-item' + (i === 0 ? ' selected' : '');
+    item.innerHTML = `
+      <div class="pred-rank">${i+1}</div>
+      <div class="pred-name">${label}</div>
+      <div class="pred-bar-wrap"><div class="pred-bar" style="width:${Math.min(pct,100)}%"></div></div>
+      <div class="pred-pct">${pct}%</div>
+    `;
+    item.onclick = () => {
+      document.querySelectorAll('.pred-item').forEach(el => el.classList.remove('selected'));
+      item.classList.add('selected');
+      fetchNutrition(lookupKey, label);
+    };
+    list.appendChild(item);
+  });
+
+  // Auto-select first
+  const firstKey = predictions[0].nutritionQuery || predictions[0].className;
+  const firstLabel = FOOD101_DB[predictions[0].className]?.label || predictions[0].className.replace(/_/g, ' ');
+  fetchNutrition(firstKey, firstLabel);
+}
+
+function mapToFood101(className) {
+  const lower = className.toLowerCase();
+  for (const [keywords, food101key] of LABEL_MAP) {
+    if (keywords.some(kw => lower.includes(kw))) return food101key;
+  }
+  // Direct match
+  const slug = lower.replace(/[^a-z]/g, '_');
+  if (FOOD101_DB[slug]) return slug;
+  return null;
+}
+
+// ═══════════════════════════════════════════════════
+//  Manual Search
+// ═══════════════════════════════════════════════════
+function manualSearch() {
+  const query = document.getElementById('manual-input').value.trim();
+  if (!query) return;
+  fetchNutrition(query, query);
+}
+
+// ═══════════════════════════════════════════════════
+//  Nutrition Lookup
+// ═══════════════════════════════════════════════════
+/*
+ * fetchNutrition(food101key, displayLabel) — 查詢食物營養資料
+ * ==============================================================
+ * 這個函式有三層查詢策略（依序嘗試）：
+ *
+ * 第1層：靜態資料庫（FOOD101_DB）
+ *   在 HTML 裡內建了 101 種食物的熱量資料
+ *   優點：不需要網路，速度最快
+ *   缺點：只有 Food-101 的 101 種食物
+ *
+ * 第2層：USDA FoodData Central API（即時查詢）
+ *   美國農業部的食物營養資料庫，有幾十萬筆資料
+ *   需要免費 API Key（申請：fdc.nal.usda.gov）
+ *   優點：資料最豐富、最準確
+ *   缺點：需要網路、需要 API Key
+ *
+ * 第3層：模糊比對（Fuzzy Match）
+ *   用英文關鍵字搜尋靜態資料庫
+ *   例如 "chicken nugget" 可能模糊比對到 "chicken_wings"
+ *   優點：不需要 API Key
+ *   缺點：準確度較低
+ *
+ * 參數：
+ *   food101key  — 查詢用的英文關鍵詞（靜態DB的key 或 自訂記憶的英文查詢詞）
+ *   displayLabel — 顯示給使用者看的名稱（可以是中文）
+ */
+async function fetchNutrition(food101key, displayLabel) {
+  // 第1層：精確比對靜態資料庫
+  if (FOOD101_DB[food101key]) {
+    const d = FOOD101_DB[food101key];
+    currentNutrition = { cal: d.cal, protein: d.protein, carbs: d.carbs, fat: d.fat };
+    const defServing = d.serving;
+    displayResults(d.label, '📚 Food-101 靜態資料庫', defServing);
+    return;
+  }
+
+  // 第2層：呼叫 USDA API（需要有設定 API Key）
+  if (usdaKey) {
+    try {
+      const result = await queryUSDA(food101key, usdaKey);
+      if (result) {
+        currentNutrition = result.nutrition;
+        displayResults(result.name, '🌐 USDA FoodData Central', 150);
+        return;
+      }
+    } catch(e) { console.warn('USDA API error:', e); }
+  }
+
+  // 第3層：模糊比對（去掉底線和空格後比較字串）
+  const fuzzyKey = fuzzyMatch(food101key);
+  if (fuzzyKey) {
+    const d = FOOD101_DB[fuzzyKey];
+    currentNutrition = { cal: d.cal, protein: d.protein, carbs: d.carbs, fat: d.fat };
+    displayResults(d.label + ' (近似)', '📚 靜態資料庫（模糊比對）', d.serving);
+    return;
+  }
+
+  // 三層都找不到才跳出錯誤提示
+  alert(`找不到「${displayLabel}」的熱量資料。\n請設定 USDA API Key 或嘗試其他食物名稱。`);
+}
+
+function fuzzyMatch(query) {
+  const q = query.toLowerCase().replace(/[_\s]/g, '');
+  for (const key of Object.keys(FOOD101_DB)) {
+    if (key.replace(/_/g,'').includes(q) || q.includes(key.replace(/_/g,''))) return key;
+  }
+  return null;
+}
+
+/*
+ * queryUSDA(query, apiKey) — 呼叫 USDA FoodData Central API
+ * ===========================================================
+ * USDA（美國農業部）提供免費的食物營養資料庫 API
+ * 可以查詢幾十萬種食物的精確熱量、蛋白質、碳水、脂肪等數據
+ *
+ * API 端點：
+ *   https://api.nal.usda.gov/fdc/v1/foods/search
+ *   參數：query=pizza, api_key=你的key, pageSize=1
+ *   dataType=Survey(FNDDS),SR Legacy  ← 只搜尋這兩種資料庫（最可靠）
+ *
+ * 回傳的 foodNutrients 陣列用 nutrientId 識別營養素：
+ *   1008 = 熱量（kcal）
+ *   1003 = 蛋白質（g）
+ *   1005 = 碳水化合物（g）
+ *   1004 = 脂肪（g）
+ *
+ * 數值單位：每 100g 食物的含量
+ */
+async function queryUSDA(query, apiKey) {
+  const url = `https://api.nal.usda.gov/fdc/v1/foods/search?query=${encodeURIComponent(query)}&api_key=${apiKey}&pageSize=1&dataType=Survey%20%28FNDDS%29,SR%20Legacy`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error('USDA API error: ' + resp.status);
+  const data = await resp.json();
+  if (!data.foods || data.foods.length === 0) return null;
+
+  const food = data.foods[0];
+  // 從 foodNutrients 陣列中用 nutrientId 找到對應的數值
+  const getNutrient = (id) => {
+    const n = food.foodNutrients?.find(n => n.nutrientId === id);
+    return n ? n.value : 0;
+  };
+  return {
+    name: food.description,
+    nutrition: {
+      cal:     getNutrient(1008),   // 熱量 kcal
+      protein: getNutrient(1003),   // 蛋白質 g
+      carbs:   getNutrient(1005),   // 碳水化合物 g
+      fat:     getNutrient(1004),
+    }
+  };
+}
+
+// ═══════════════════════════════════════════════════
+//  Display Results
+// ═══════════════════════════════════════════════════
+function displayResults(foodName, source, serving) {
+  document.getElementById('empty-state-card').style.display = 'none';
+  document.getElementById('calorie-card').style.display = 'block';
+
+  document.getElementById('result-food-name').textContent = foodName;
+  document.getElementById('result-source').textContent = source;
+
+  // Set serving
+  currentServing = serving || 100;
+  const slider = document.getElementById('serving-slider');
+  slider.value = currentServing;
+  updateServing(currentServing);
+}
+
+function updateServing(grams) {
+  currentServing = parseInt(grams);
+  if (!currentNutrition) return;
+  const ratio = currentServing / 100;
+  const cal     = Math.round(currentNutrition.cal     * ratio);
+  const protein = (currentNutrition.protein * ratio).toFixed(1);
+  const carbs   = (currentNutrition.carbs   * ratio).toFixed(1);
+  const fat     = (currentNutrition.fat     * ratio).toFixed(1);
+
+  document.getElementById('result-calories').textContent = cal;
+  document.getElementById('serving-display').textContent = `${currentServing}g → ${cal} kcal`;
+  document.getElementById('macro-carb-val').textContent    = `${carbs}g`;
+  document.getElementById('macro-protein-val').textContent = `${protein}g`;
+  document.getElementById('macro-fat-val').textContent     = `${fat}g`;
+
+  // Bar widths (relative to calories)
+  const totalMacroCal = parseFloat(carbs)*4 + parseFloat(protein)*4 + parseFloat(fat)*9;
+  const carbPct    = totalMacroCal > 0 ? (parseFloat(carbs)*4 / totalMacroCal * 100) : 0;
+  const protPct    = totalMacroCal > 0 ? (parseFloat(protein)*4 / totalMacroCal * 100) : 0;
+  const fatPct     = totalMacroCal > 0 ? (parseFloat(fat)*9 / totalMacroCal * 100) : 0;
+
+  document.getElementById('macro-carb-bar').style.width    = carbPct + '%';
+  document.getElementById('macro-protein-bar').style.width = protPct + '%';
+  document.getElementById('macro-fat-bar').style.width     = fatPct  + '%';
+
+  document.getElementById('legend-carb-pct').textContent    = Math.round(carbPct) + '%';
+  document.getElementById('legend-protein-pct').textContent = Math.round(protPct) + '%';
+  document.getElementById('legend-fat-pct').textContent     = Math.round(fatPct)  + '%';
+
+  drawDonut(carbPct, protPct, fatPct);
+  updateTags(cal, currentNutrition);
+}
+
+// ═══════════════════════════════════════════════════
+//  Donut Chart (pure canvas)
+// ═══════════════════════════════════════════════════
+function drawDonut(carbPct, protPct, fatPct) {
+  const canvas = document.getElementById('macro-donut');
+  const ctx = canvas.getContext('2d');
+  const cx = 50, cy = 50, r = 38, innerR = 24;
+  ctx.clearRect(0, 0, 100, 100);
+
+  const segments = [
+    { pct: carbPct,  color: '#fdcb6e' },
+    { pct: protPct,  color: '#e17055' },
+    { pct: fatPct,   color: '#74b9ff' },
+  ];
+  let start = -Math.PI / 2;
+  segments.forEach(seg => {
+    const angle = (seg.pct / 100) * 2 * Math.PI;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, r, start, start + angle);
+    ctx.closePath();
+    ctx.fillStyle = seg.color;
+    ctx.fill();
+    start += angle;
+  });
+
+  // Inner hole
+  ctx.beginPath();
+  ctx.arc(cx, cy, innerR, 0, 2 * Math.PI);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+}
+
+// ═══════════════════════════════════════════════════
+//  Nutrition Tags
+// ═══════════════════════════════════════════════════
+function updateTags(cal, n) {
+  const tags = [];
+  if (cal < 150) tags.push({ text: '🥗 低熱量', highlight: true });
+  if (cal > 400) tags.push({ text: '🔥 高熱量', highlight: true });
+  if (n.protein > 15) tags.push({ text: '💪 高蛋白', highlight: true });
+  if (n.fat < 5) tags.push({ text: '💧 低脂肪' });
+  if (n.fat > 20) tags.push({ text: '🧈 高脂肪' });
+  if (n.carbs < 10) tags.push({ text: '🌿 低碳水' });
+  if (n.carbs > 40) tags.push({ text: '🍞 高碳水' });
+  tags.push({ text: `每 100g ${Math.round(n.cal)} kcal` });
+
+  const container = document.getElementById('nutrition-tags');
+  container.innerHTML = tags.map(t =>
+    `<span class="tag ${t.highlight ? 'highlight' : ''}">${t.text}</span>`
+  ).join('');
+}
+
+// ═══════════════════════════════════════════════════
+//  Settings
+// ═══════════════════════════════════════════════════
+function openSettings() {
+  document.getElementById('usda-key-input').value = usdaKey;
+  document.getElementById('settings-overlay').classList.add('open');
+}
+function closeSettings() {
+  document.getElementById('settings-overlay').classList.remove('open');
+}
+function saveSettings() {
+  usdaKey = document.getElementById('usda-key-input').value.trim();
+  localStorage.setItem('usda_key', usdaKey);
+  const badge = document.getElementById('usda-badge-header');
+  if (usdaKey) {
+    badge.className = 'usda-badge connected';
+    badge.textContent = '● USDA API 已連接';
+  } else {
+    badge.className = 'usda-badge offline';
+    badge.textContent = '● 靜態資料庫';
+  }
+  closeSettings();
+}
+
+// ═══════════════════════════════════════════════════
+//  Init
+// ═══════════════════════════════════════════════════
+window.addEventListener('load', () => {
+  loadModel();
+  updateMemoryCount();
+  if (usdaKey) {
+    const badge = document.getElementById('usda-badge-header');
+    badge.className = 'usda-badge connected';
+    badge.textContent = '● USDA API 已連接';
+  }
+  document.getElementById('usda-key-input') && (document.getElementById('usda-key-input').value = usdaKey);
+});
+</script>
+</body>
+</html>
